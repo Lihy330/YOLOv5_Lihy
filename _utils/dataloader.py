@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
-from PIL import Image
+from PIL import Image, ImageDraw
 from torchvision import transforms
 import numpy as np
 from _utils import get_anchors
@@ -82,17 +82,21 @@ class Yolo_Dataset(Dataset):
         return len(self.images_path)
 
     def __getitem__(self, index):
-        image = Image.open(self.images_path[0])
+        image = Image.open(self.images_path[index])
         transform = transforms.Compose([
             transforms.Resize((640, 640)),
             transforms.ToTensor()
         ])
         image_tensor = transform(image)
+        # 对标签同样需要进行Resize处理
+        resized_annotations = self.resize_annotations(self.annotations_numpy[index], self.input_shape, image.size)
+        # # 将标签绘制在原图上查看缩放效果
+        # self.draw_origin_image_label(image.copy(), resized_annotations, self.input_shape)
         # 先将标签坐标信息归一化，并转换成角点坐标
-        box = np.zeros_like(self.annotations_numpy[index], dtype=np.float32)
+        box = np.zeros_like(resized_annotations, dtype=np.float32)
         # 归一化
-        box[:, 4] = self.annotations_numpy[index][:, 4]
-        box[:, :-1] = self.annotations_numpy[index][:, :-1] / self.input_shape[0]
+        box[:, 4] = resized_annotations[:, 4]
+        box[:, :-1] = resized_annotations[:, :-1] / self.input_shape[0]
         # 转换成中心点坐标
         temp_width = box[:, 2] - box[:, 0]
         temp_height = box[:, 3] - box[:, 1]
@@ -103,7 +107,26 @@ class Yolo_Dataset(Dataset):
         # 获取到每个标签框与特征层、先验框、网格点的对应情况，方便后续计算损失
         self.get_targets(box)
 
-        return image_tensor, box
+        return image_tensor
+
+    # 该方法用来将标签框的坐标参数同样进行缩放，保持与图片缩放一致
+    # annotations 未处理的标签框
+    # resized_shape 表示图片缩放后的尺寸大小
+    # image_shape 表示原图的尺寸大小
+    def resize_annotations(self, annotations, resized_shape, image_shape):
+        # 注意Image读入的图片尺寸信息是宽高，而tensor是行列，因此是高宽
+        iw, ih = image_shape[0], image_shape[1]
+        resized_w, resized_h = resized_shape[1], resized_shape[0]
+        # 分别计算宽和高的缩放比例
+        scale_w = resized_w / iw
+        scale_h = resized_h / ih
+        resized_annotations = np.zeros_like(annotations)
+        resized_annotations[:, 0] = annotations[:, 0] * scale_w
+        resized_annotations[:, 2] = annotations[:, 2] * scale_w
+        resized_annotations[:, 1] = annotations[:, 1] * scale_h
+        resized_annotations[:, 3] = annotations[:, 3] * scale_h
+        resized_annotations[:, 4] = annotations[:, 4]
+        return resized_annotations
 
     # targets表示当前图片的标签，形状是(num_boxes, 5)  '5' => xmin, ymin, xmax, ymax, class_index
     def get_targets(self, targets):
@@ -128,6 +151,13 @@ class Yolo_Dataset(Dataset):
 
         return y_true[0].shape, y_true[1].shape, y_true[2].shape
 
+    def draw_origin_image_label(self, image, labels, input_shape):
+        image = transforms.Resize(input_shape)(image)
+        draw = ImageDraw.Draw(image)
+        for label in labels:
+            draw.rectangle([label[0], label[1], label[2], label[3]], outline=(0, 255, 0), width=3)
+        image.show()
+
 
 # 保证整体取出数据集使用的数据整理打包函数
 def collate_fn(data):
@@ -143,7 +173,7 @@ if __name__ == "__main__":
     num_classes = 20
     dt = Yolo_Dataset(train_data_file_path, val_data_file_path, anchors_path, num_classes)
     dl = DataLoader(dt, batch_size=2, shuffle=False, collate_fn=collate_fn)
-    dt[0]
+    dt[1291]
     # for idx, (images, labels) in enumerate(dl):
     #     print(labels)
     #     break
