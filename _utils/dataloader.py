@@ -58,17 +58,25 @@ def get_annotations(path):
 
 
 class Yolo_Dataset(Dataset):
-    def __init__(self, train_data_file_path, val_data_file_path, anchors_path, num_classes, anchors_mask=[[6, 7, 8], [3, 4, 5], [0, 1, 2]], mode='train'):
+    def __init__(self, train_data_file_path, val_data_file_path, anchors_path, num_classes,
+                 anchors_mask=[[6, 7, 8], [3, 4, 5], [0, 1, 2]], mode='train'):
         super(Yolo_Dataset, self).__init__()
         # 数据集路径
         self.train_data_file_path = train_data_file_path
         self.val_data_file_path = val_data_file_path
         # 先验框路径
         self.anchors_path = anchors_path
+        # 先验框尺寸
         self.anchors = get_anchors(self.anchors_path)
+        # 先验框索引
         self.anchors_mask = anchors_mask
+        # 网络输入的图像尺寸
         self.input_shape = [640, 640]
+        # 类别数量
         self.num_classes = num_classes
+        # 正负样本阈值
+        self.threshold = 4
+
         if mode == 'train':
             self.images_path = get_images_path(self.train_data_file_path)
             self.annotations = get_annotations(self.train_data_file_path)
@@ -135,8 +143,9 @@ class Yolo_Dataset(Dataset):
         feature_shape = [int(self.input_shape[0] / num) for num in [32, 16, 8]]
         # y_true是一个列表，每个元素代表一个特征层上与标签框的对应信息
         # shape: ((3, 80, 80, 25), (3, 40, 40, 25), (3, 20, 20, 25))
-        y_true = [np.zeros((len(self.anchors_mask[layer]), feature_shape[layer], feature_shape[layer], self.num_classes+5),
-                           dtype=np.float32) for layer in range(feature_layers)]
+        y_true = [
+            np.zeros((len(self.anchors_mask[layer]), feature_shape[layer], feature_shape[layer], self.num_classes + 5),
+                     dtype=np.float32) for layer in range(feature_layers)]
         # 枚举每一个特征层
         for layer in range(feature_layers):
             # 将标签框的数据映射到当前特征层的尺寸
@@ -145,8 +154,38 @@ class Yolo_Dataset(Dataset):
             box[:, -1] = targets[:, -1]
             # 将先验框尺寸映射到当前特征层
             feature_anchors = ((self.anchors[self.anchors_mask[layer]]) / self.input_shape[0]) * feature_shape[layer]
-            print(feature_anchors)
-            print(box)
+            # 计算标签框与先验框的宽高比
+            # np.expand_dims(box[:, 2:4], 1)  shape: (num_boxes, 2) => (num_boxes, 1, 2)  这样才能通过广播计算
+            ratios_box_anchors = (np.expand_dims(box[:, 2:4], 1) / feature_anchors)
+            # 计算先验框与标签框的宽高比
+            ratios_anchors_box = (feature_anchors / np.expand_dims(box[:, 2:4], 1))
+            # 拼接起来两组比值，同时求出最大值
+            ratios = np.max(np.concatenate([ratios_box_anchors, ratios_anchors_box], 2), 2)
+            # 枚举每一个标签框
+            for label_box_index in range(box.shape[0]):
+                label_box_mask = ratios[label_box_index] < self.threshold
+                # 如果全部都大于阈值，就取最小的作为正样本
+                if (label_box_mask == False).all():
+                    label_box_mask = ratios[label_box_index] <= np.min(ratios[label_box_index])
+                # 枚举每一个先验框
+                for anchor_index in range(len(label_box_mask)):
+                    # 如果当前先验框是负样本，不予处理
+                    if not label_box_mask[anchor_index]:
+                        continue
+                    # 如果当前先验框是正样本
+                    # 那么就判断当前标签框落在了哪一个网格内
+                    local_x = int(box[label_box_index][0])
+                    local_y = int(box[label_box_index][1])
+                    y_true[layer][anchor_index, local_y, local_x, 0] = box[label_box_index][0]
+                    y_true[layer][anchor_index, local_y, local_x, 1] = box[label_box_index][1]
+                    y_true[layer][anchor_index, local_y, local_x, 2] = box[label_box_index][2]
+                    y_true[layer][anchor_index, local_y, local_x, 3] = box[label_box_index][3]
+                    # 置信度
+                    y_true[layer][anchor_index, local_y, local_x, 4] = 1
+                    # 类别
+                    y_true[layer][anchor_index, local_y, local_x, box[label_box_index][4].long() + 5] = 1
+                    break
+                break
             break
 
         return y_true[0].shape, y_true[1].shape, y_true[2].shape
