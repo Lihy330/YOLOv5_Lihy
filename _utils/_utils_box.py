@@ -56,7 +56,7 @@ class DecodeBox:
             tw = torch.sigmoid(output_decode[..., 2])
             th = torch.sigmoid(output_decode[..., 3])
             conf = torch.sigmoid(output_decode[..., 4])
-
+            pred_cls = torch.sigmoid(output_decode[..., 5:])
             # 保证设备统一
             FloatTensor = torch.cuda.FloatTensor if self.device == 'cuda:0' else torch.FloatTensor
             LongTensor = torch.cuda.LongTensor if self.device == 'cuda:0' else torch.LongTensor
@@ -73,14 +73,11 @@ class DecodeBox:
             grid_h = anchors_h[layer].unsqueeze(0).type(FloatTensor)
 
             # 调整坐标
-            pred_boxes = FloatTensor((batch_size, len(self.anchors_mask[layer]),
-                                      self.feature_shape[layer], self.feature_shape[layer], 4))
+            pred_boxes = FloatTensor(output_decode[..., :4].shape)
             pred_boxes[..., 0] = 2 * tx.data - 0.5 + grid_x
             pred_boxes[..., 1] = 2 * ty.data - 0.5 + grid_y
             pred_boxes[..., 2] = grid_w * (2 * tw.data) ** 2
             pred_boxes[..., 3] = grid_h * (2 * th.data) ** 2
-
-            break
 
 
 de = DecodeBox('train')
