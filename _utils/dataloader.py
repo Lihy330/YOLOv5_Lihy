@@ -57,6 +57,34 @@ def get_annotations(path):
     return annotations
 
 
+def draw_origin_image_label(image, labels, input_shape):
+    image = transforms.Resize(input_shape)(image)
+    draw = ImageDraw.Draw(image)
+    for label in labels:
+        draw.rectangle([label[0], label[1], label[2], label[3]], outline=(0, 255, 0), width=3)
+    image.show()
+
+
+# 该方法用来将标签框的坐标参数同样进行缩放，保持与图片缩放一致
+    # annotations 未处理的标签框
+    # resized_shape 表示图片缩放后的尺寸大小
+    # image_shape 表示原图的尺寸大小
+def resize_annotations(annotations, resized_shape, image_shape):
+    # 注意Image读入的图片尺寸信息是宽高，而tensor是行列，因此是高宽
+    iw, ih = image_shape[0], image_shape[1]
+    resized_w, resized_h = resized_shape[1], resized_shape[0]
+    # 分别计算宽和高的缩放比例
+    scale_w = resized_w / iw
+    scale_h = resized_h / ih
+    resized_annotations = np.zeros_like(annotations)
+    resized_annotations[:, 0] = annotations[:, 0] * scale_w
+    resized_annotations[:, 2] = annotations[:, 2] * scale_w
+    resized_annotations[:, 1] = annotations[:, 1] * scale_h
+    resized_annotations[:, 3] = annotations[:, 3] * scale_h
+    resized_annotations[:, 4] = annotations[:, 4]
+    return resized_annotations
+
+
 class Yolo_Dataset(Dataset):
     def __init__(self, train_data_file_path, val_data_file_path, anchors_path, num_classes,
                  anchors_mask=[[6, 7, 8], [3, 4, 5], [0, 1, 2]], mode='train'):
@@ -97,9 +125,9 @@ class Yolo_Dataset(Dataset):
         ])
         image_tensor = transform(image)
         # 对标签同样需要进行Resize处理
-        resized_annotations = self.resize_annotations(self.annotations_numpy[index], self.input_shape, image.size)
+        resized_annotations = resize_annotations(self.annotations_numpy[index], self.input_shape, image.size)
         # # 将标签绘制在原图上查看缩放效果
-        # self.draw_origin_image_label(image.copy(), resized_annotations, self.input_shape)
+        # draw_origin_image_label(image.copy(), resized_annotations, self.input_shape)
         # 先将标签坐标信息归一化，并转换成角点坐标
         box = np.zeros_like(resized_annotations, dtype=np.float32)
         # 归一化
@@ -113,28 +141,9 @@ class Yolo_Dataset(Dataset):
         box[:, 2] = temp_width
         box[:, 3] = temp_height
         # 获取到每个标签框与特征层、先验框、网格点的对应情况，方便后续计算损失
-        self.get_targets(box)
+        y_true = self.get_targets(box)
 
-        return image_tensor
-
-    # 该方法用来将标签框的坐标参数同样进行缩放，保持与图片缩放一致
-    # annotations 未处理的标签框
-    # resized_shape 表示图片缩放后的尺寸大小
-    # image_shape 表示原图的尺寸大小
-    def resize_annotations(self, annotations, resized_shape, image_shape):
-        # 注意Image读入的图片尺寸信息是宽高，而tensor是行列，因此是高宽
-        iw, ih = image_shape[0], image_shape[1]
-        resized_w, resized_h = resized_shape[1], resized_shape[0]
-        # 分别计算宽和高的缩放比例
-        scale_w = resized_w / iw
-        scale_h = resized_h / ih
-        resized_annotations = np.zeros_like(annotations)
-        resized_annotations[:, 0] = annotations[:, 0] * scale_w
-        resized_annotations[:, 2] = annotations[:, 2] * scale_w
-        resized_annotations[:, 1] = annotations[:, 1] * scale_h
-        resized_annotations[:, 3] = annotations[:, 3] * scale_h
-        resized_annotations[:, 4] = annotations[:, 4]
-        return resized_annotations
+        return image_tensor, box, y_true
 
     # targets表示当前图片的标签，形状是(num_boxes, 5)  '5' => xmin, ymin, xmax, ymax, class_index
     def get_targets(self, targets):
@@ -144,29 +153,36 @@ class Yolo_Dataset(Dataset):
         # y_true是一个列表，每个元素代表一个特征层上与标签框的对应信息
         # shape: ((3, 80, 80, 25), (3, 40, 40, 25), (3, 20, 20, 25))
         y_true = [
-            np.zeros((len(self.anchors_mask[layer]), feature_shape[layer], feature_shape[layer], self.num_classes + 5),
-                     dtype=np.float32) for layer in range(feature_layers)]
+            torch.zeros(
+                (len(self.anchors_mask[layer]), feature_shape[layer], feature_shape[layer], self.num_classes + 5),
+                dtype=torch.float32) for layer in range(feature_layers)]
+        # 防止多个标签框占据同一个网格，需要记录每个网格上的标签框与先验框宽高比的最小值
+        best_ratios = [
+            torch.zeros(
+                (len(self.anchors_mask[layer]), feature_shape[layer], feature_shape[layer]),
+                dtype=torch.float32) for layer in range(feature_layers)]
         # 枚举每一个特征层
         for layer in range(feature_layers):
             # 将标签框的数据映射到当前特征层的尺寸
             box = np.zeros_like(targets, dtype=np.float32)
             box[:, :-1] = targets[:, :-1] * feature_shape[layer]
             box[:, -1] = targets[:, -1]
+            box = torch.from_numpy(box)
             # 将先验框尺寸映射到当前特征层
             feature_anchors = ((self.anchors[self.anchors_mask[layer]]) / self.input_shape[0]) * feature_shape[layer]
             # 计算标签框与先验框的宽高比
             # np.expand_dims(box[:, 2:4], 1)  shape: (num_boxes, 2) => (num_boxes, 1, 2)  这样才能通过广播计算
-            ratios_box_anchors = (np.expand_dims(box[:, 2:4], 1) / feature_anchors)
+            ratios_box_anchors = (torch.unsqueeze(box[:, 2:4], 1) / feature_anchors)
             # 计算先验框与标签框的宽高比
-            ratios_anchors_box = (feature_anchors / np.expand_dims(box[:, 2:4], 1))
+            ratios_anchors_box = (feature_anchors / torch.unsqueeze(box[:, 2:4], 1))
             # 拼接起来两组比值，同时求出最大值
-            ratios = np.max(np.concatenate([ratios_box_anchors, ratios_anchors_box], 2), 2)
+            ratios = torch.max(torch.concat([ratios_box_anchors, ratios_anchors_box], 2), 2)[0]
             # 枚举每一个标签框
             for label_box_index in range(box.shape[0]):
                 label_box_mask = ratios[label_box_index] < self.threshold
                 # 如果全部都大于阈值，就取最小的作为正样本
                 if (label_box_mask == False).all():
-                    label_box_mask = ratios[label_box_index] <= np.min(ratios[label_box_index])
+                    label_box_mask = ratios[label_box_index] <= torch.min(ratios[label_box_index])
                 # 枚举每一个先验框
                 for anchor_index in range(len(label_box_mask)):
                     # 如果当前先验框是负样本，不予处理
@@ -176,6 +192,16 @@ class Yolo_Dataset(Dataset):
                     # 那么就判断当前标签框落在了哪一个网格内
                     local_x = int(box[label_box_index][0])
                     local_y = int(box[label_box_index][1])
+                    # 如果当前网格已经被其他标签框占据，需要判断当前标签框与当前先验框的宽之比高之比最小值是否更小
+                    #   如果更小，那么就将当前网格上的标签框替换为当前枚举到的标签框，否则不处理
+                    # 已经占据
+                    if y_true[layer][anchor_index, local_y, local_x, 0]:
+                        # 发现比值更小
+                        if ratios[label_box_index][anchor_index] < best_ratios[layer][anchor_index, local_y, local_x]:
+                            y_true[layer][anchor_index, local_y, local_x] = 0
+                        else:
+                            continue
+                    # 当前网格没有被占据
                     y_true[layer][anchor_index, local_y, local_x, 0] = box[label_box_index][0]
                     y_true[layer][anchor_index, local_y, local_x, 1] = box[label_box_index][1]
                     y_true[layer][anchor_index, local_y, local_x, 2] = box[label_box_index][2]
@@ -184,18 +210,9 @@ class Yolo_Dataset(Dataset):
                     y_true[layer][anchor_index, local_y, local_x, 4] = 1
                     # 类别
                     y_true[layer][anchor_index, local_y, local_x, box[label_box_index][4].long() + 5] = 1
-                    break
-                break
-            break
-
-        return y_true[0].shape, y_true[1].shape, y_true[2].shape
-
-    def draw_origin_image_label(self, image, labels, input_shape):
-        image = transforms.Resize(input_shape)(image)
-        draw = ImageDraw.Draw(image)
-        for label in labels:
-            draw.rectangle([label[0], label[1], label[2], label[3]], outline=(0, 255, 0), width=3)
-        image.show()
+                    # 保存当前标签框与先验框的宽之比高之比的值，用于后续判重处理
+                    best_ratios[layer][anchor_index, local_y, local_x] = ratios[label_box_index][anchor_index]
+        return y_true
 
 
 # 保证整体取出数据集使用的数据整理打包函数
