@@ -23,7 +23,6 @@ class YOLO(nn.Module):
         self.head2 = nn.Conv2d(base_channels * 8, (num_classes + 5) * len(anchors_mask[1]), kernel_size=1, stride=1, padding=0)
         self.head3 = nn.Conv2d(base_channels * 16, (num_classes + 5) * len(anchors_mask[2]), kernel_size=1, stride=1, padding=0)
 
-
     def forward(self, x):
         # 三个特征层shape分别为
         # [bs, 256, 80, 80]

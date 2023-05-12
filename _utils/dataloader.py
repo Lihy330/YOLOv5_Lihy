@@ -142,14 +142,14 @@ class Yolo_Dataset(Dataset):
         box[:, 3] = temp_height
         # 获取到每个标签框与特征层、先验框、网格点的对应情况，方便后续计算损失
         y_true = self.get_targets(box)
-
+        print(y_true[0].shape)
         return image_tensor, box, y_true
 
     # targets表示当前图片的标签，形状是(num_boxes, 5)  '5' => xmin, ymin, xmax, ymax, class_index
     def get_targets(self, targets):
         feature_layers = len(self.anchors_mask)
         # 特征层尺寸：[80, 40, 20]
-        feature_shape = [int(self.input_shape[0] / num) for num in [32, 16, 8]]
+        feature_shape = [int(self.input_shape[0] / num) for num in [8, 16, 32]]
         # y_true是一个列表，每个元素代表一个特征层上与标签框的对应信息
         # shape: ((3, 80, 80, 25), (3, 40, 40, 25), (3, 20, 20, 25))
         y_true = [
