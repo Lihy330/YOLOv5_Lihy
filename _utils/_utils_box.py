@@ -26,6 +26,7 @@ class DecodeBox:
             return model.eval()
 
     def decode(self, input):
+        output_boxes = []
         batch_size = input.shape[0]
         image = input.to(self.device)
         output = self.model(image)
@@ -78,6 +79,19 @@ class DecodeBox:
             pred_boxes[..., 1] = 2 * ty.data - 0.5 + grid_y
             pred_boxes[..., 2] = grid_w * (2 * tw.data) ** 2
             pred_boxes[..., 3] = grid_h * (2 * th.data) ** 2
+            # 归一化到0~1
+            _scale = torch.tensor(self.feature_shape[layer]).\
+                repeat(self.feature_shape[layer], self.feature_shape[layer]).unsqueeze(2).\
+                repeat(1, 1, 4).type(FloatTensor)
+            # 将位置坐标与置信度和类别概率拼接起来
+            out_boxes = torch.concat([pred_boxes / _scale, conf.data.unsqueeze(-1), pred_cls.data], dim=-1).\
+                view(batch_size, -1, self.num_classes + 5)
+            output_boxes.append(out_boxes)
+        # output_boxes 列表，内有三个元素，分别是三个特征层经过解码后获得的预测框信息
+        # shape: (bs, num_boxes_layer1, 25)
+        # shape: (bs, num_boxes_layer2, 25)
+        # shape: (bs, num_boxes_layer3, 25)
+        return output_boxes
 
 
 de = DecodeBox('train')
