@@ -150,9 +150,9 @@ class Yolo_Dataset(Dataset):
     def get_targets(self, targets):
         feature_layers = len(self.anchors_mask)
         # 特征层尺寸：[80, 40, 20]
-        feature_shape = [int(self.input_shape[0] / num) for num in [8, 16, 32]]
+        feature_shape = [int(self.input_shape[0] / num) for num in [32, 16, 8]]
         # y_true是一个列表，每个元素代表一个特征层上与标签框的对应信息
-        # shape: ((3, 80, 80, 25), (3, 40, 40, 25), (3, 20, 20, 25))
+        # shape: ((3, 20, 20, 25), (3, 40, 40, 25), (3, 80, 80, 25))
         y_true = [
             torch.zeros(
                 (len(self.anchors_mask[layer]), feature_shape[layer], feature_shape[layer], self.num_classes + 5),

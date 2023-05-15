@@ -44,7 +44,7 @@ class YOLOBody(nn.Module):
         out2 = self.head2(out2)
         out3 = self.head3(out3)
 
-        return out1, out2, out3
+        return out3, out2, out1
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ class DecodeBox:
         self.num_classes = 20
         self.anchors_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
         self.input_shape = [640, 640]
-        self.feature_shape = [int(self.input_shape[0] / num) for num in [8, 16, 32]]
+        self.feature_shape = [int(self.input_shape[0] / num) for num in [32, 16, 8]]
         self.anchors_path = r"D:\YOLO\yolov5-pytorch-main\model_data\yolo_anchor.txt"
         self.anchors = anchors
         self.device = device
@@ -18,7 +18,7 @@ class DecodeBox:
         output = model(inputs)
         # 宽高坐标网格列表
         # 列表长度为3，表示三个特征层
-        # 每个元素的shape: (3, 80or40or20, 80or40or20) 存储的值是映射到特征层尺寸的宽度和高度
+        # 每个元素的shape: (3, 20or40or80, 20or40or80) 存储的值是映射到特征层尺寸的宽度和高度
         anchors_w = []
         anchors_h = []
         for layer in range(len(self.anchors_mask)):
@@ -33,7 +33,7 @@ class DecodeBox:
                                           for idx in anchors_mask_layer], dim=0))
         # 枚举每一个特征层
         for layer in range(len(self.anchors_mask)):
-            # output_decode.shape = (1, 3, 80or40or20, 80or40or20, 25)
+            # output_decode.shape = (1, 3, 20or40or80, 20or40or80, 25)
             output_decode = output[layer].view(batch_size, len(self.anchors_mask), 5 + self.num_classes,
                                                self.feature_shape[layer],
                                                self.feature_shape[layer]).permute(0, 1, 3, 4, 2).contiguous()

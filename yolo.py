@@ -8,9 +8,8 @@ from torchvision.transforms import transforms
 
 
 class YOLO:
-    def __init__(self, mode):
+    def __init__(self):
         super(YOLO, self).__init__()
-        self.mode = mode
         self.base_depth = 3
         self.base_channels = 64
         self.num_classes = 20
@@ -26,10 +25,8 @@ class YOLO:
         self.decode = DecodeBox(self.anchors, self.device)
 
     def generate_model(self, model):
-        if self.mode == 'train':
-            return model.to(self.device)
-        else:
-            return model.eval().to(self.device)
+        return model.eval().to(self.device)
+
 
     def detect_image(self, image):
         image = self.resize(image)
@@ -40,7 +37,7 @@ class YOLO:
 
 
 if __name__ == "__main__":
-    yolo = YOLO('train')
+    yolo = YOLO()
     img = PIL.Image.open(r"./img/000009.jpg")
     yolo.detect_image(img)
 
