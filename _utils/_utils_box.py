@@ -1,35 +1,21 @@
 import torch
-from YoloNet import YOLO
-from _utils import get_anchors
 
 
 class DecodeBox:
-    def __init__(self, mode='train'):
+    def __init__(self, anchors, device):
         super(DecodeBox, self).__init__()
-        self.mode = mode
-        self.base_depth = 3
-        self.base_channels = 64
         self.num_classes = 20
         self.anchors_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
         self.input_shape = [640, 640]
         self.feature_shape = [int(self.input_shape[0] / num) for num in [8, 16, 32]]
-        self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
         self.anchors_path = r"D:\YOLO\yolov5-pytorch-main\model_data\yolo_anchor.txt"
-        self.anchors = get_anchors(self.anchors_path)
-        self.model = self.generate_model(
-            YOLO(self.base_depth, self.base_channels, self.num_classes, self.anchors_mask)).to(self.device)
+        self.anchors = anchors
+        self.device = device
 
-    def generate_model(self, model):
-        if self.mode == 'train':
-            return model
-        else:
-            return model.eval()
-
-    def decode(self, input):
+    def decode_box(self, model, inputs):
         output_boxes = []
-        batch_size = input.shape[0]
-        image = input.to(self.device)
-        output = self.model(image)
+        batch_size = inputs.shape[0]
+        output = model(inputs)
         # 宽高坐标网格列表
         # 列表长度为3，表示三个特征层
         # 每个元素的shape: (3, 80or40or20, 80or40or20) 存储的值是映射到特征层尺寸的宽度和高度
@@ -80,11 +66,11 @@ class DecodeBox:
             pred_boxes[..., 2] = grid_w * (2 * tw.data) ** 2
             pred_boxes[..., 3] = grid_h * (2 * th.data) ** 2
             # 归一化到0~1
-            _scale = torch.tensor(self.feature_shape[layer]).\
-                repeat(self.feature_shape[layer], self.feature_shape[layer]).unsqueeze(2).\
+            _scale = torch.tensor(self.feature_shape[layer]). \
+                repeat(self.feature_shape[layer], self.feature_shape[layer]).unsqueeze(2). \
                 repeat(1, 1, 4).type(FloatTensor)
             # 将位置坐标与置信度和类别概率拼接起来
-            out_boxes = torch.concat([pred_boxes / _scale, conf.data.unsqueeze(-1), pred_cls.data], dim=-1).\
+            out_boxes = torch.concat([pred_boxes / _scale, conf.data.unsqueeze(-1), pred_cls.data], dim=-1). \
                 view(batch_size, -1, self.num_classes + 5)
             output_boxes.append(out_boxes)
         # output_boxes 列表，内有三个元素，分别是三个特征层经过解码后获得的预测框信息
@@ -92,8 +78,3 @@ class DecodeBox:
         # shape: (bs, num_boxes_layer2, 25)
         # shape: (bs, num_boxes_layer3, 25)
         return output_boxes
-
-
-de = DecodeBox('train')
-im = torch.randn(1, 3, 640, 640)
-de.decode(im)

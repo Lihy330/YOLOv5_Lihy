@@ -121,6 +121,7 @@ class Yolo_Dataset(Dataset):
         image = Image.open(self.images_path[index])
         transform = transforms.Compose([
             transforms.Resize((640, 640)),
+            # 转成tensor时已经自动归一化
             transforms.ToTensor()
         ])
         image_tensor = transform(image)

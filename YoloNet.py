@@ -3,9 +3,9 @@ import torch
 import torch.nn as nn
 
 
-class YOLO(nn.Module):
+class YOLOBody(nn.Module):
     def __init__(self, base_depth, base_channels, num_classes, anchors_mask=[[6, 7, 8], [3, 4, 5], [0, 1, 2]]):
-        super(YOLO, self).__init__()
+        super(YOLOBody, self).__init__()
         self.backbone = CSPDarkNet(base_depth, base_channels)
         # 上采样2倍
         self.upSample = nn.Upsample(scale_factor=2, mode='nearest')
@@ -53,7 +53,7 @@ if __name__ == "__main__":
     img = img.to(device)
     num_classes = 20
     anchors_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
-    model = YOLO(3, 64, num_classes, anchors_mask)
+    model = YOLOBody(3, 64, num_classes, anchors_mask)
     model = model.to(device)
     output = model(img)
     print(output[0].shape, output[1].shape, output[2].shape)
