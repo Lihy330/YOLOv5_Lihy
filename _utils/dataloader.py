@@ -149,7 +149,7 @@ class Yolo_Dataset(Dataset):
     # targets表示当前图片的标签，形状是(num_boxes, 5)  '5' => xmin, ymin, xmax, ymax, class_index
     def get_targets(self, targets):
         feature_layers = len(self.anchors_mask)
-        # 特征层尺寸：[80, 40, 20]
+        # 特征层尺寸：[20, 40, 80]
         feature_shape = [int(self.input_shape[0] / num) for num in [32, 16, 8]]
         # y_true是一个列表，每个元素代表一个特征层上与标签框的对应信息
         # shape: ((3, 20, 20, 25), (3, 40, 40, 25), (3, 80, 80, 25))

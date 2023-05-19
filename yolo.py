@@ -24,7 +24,7 @@ class YOLO:
             YOLOBody(self.base_depth, self.base_channels, self.num_classes, self.anchors_mask))
         self.resize = transforms.Resize(self.input_shape)
         self.toTensor = transforms.ToTensor()
-        self.decode = DecodeBox(self.anchors, self.device)
+        self.decode = DecodeBox(self.input_shape ,self.anchors, self.device, self.num_classes, self.anchors_mask)
 
     def generate_model(self, model):
         # model.load_state_dict(torch.load(r'./model_data/yolov5_l.pth'))

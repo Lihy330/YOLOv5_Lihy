@@ -2,11 +2,11 @@ import torch
 
 
 class DecodeBox:
-    def __init__(self, anchors, device):
+    def __init__(self, input_shape, anchors, device, num_classes, anchors_mask):
         super(DecodeBox, self).__init__()
-        self.num_classes = 80
-        self.anchors_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
-        self.input_shape = [640, 640]
+        self.num_classes = num_classes
+        self.anchors_mask = anchors_mask
+        self.input_shape = input_shape
         self.feature_shape = [int(self.input_shape[0] / num) for num in [32, 16, 8]]
         self.anchors_path = r"D:\YOLO\yolov5-pytorch-main\model_data\yolo_anchor.txt"
         self.anchors = anchors
