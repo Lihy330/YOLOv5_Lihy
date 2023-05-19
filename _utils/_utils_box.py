@@ -4,7 +4,7 @@ import torch
 class DecodeBox:
     def __init__(self, anchors, device):
         super(DecodeBox, self).__init__()
-        self.num_classes = 20
+        self.num_classes = 80
         self.anchors_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
         self.input_shape = [640, 640]
         self.feature_shape = [int(self.input_shape[0] / num) for num in [32, 16, 8]]
