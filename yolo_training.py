@@ -70,6 +70,8 @@ class YOLO_Loss(nn.Module):
         self.anchors_mask = anchors_mask
         self.num_classes = num_classes
         self.anchors = anchors
+        self.lambda_pos = 5
+        self.lambda_neg = 0.5
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
     def get_pred_boxes(self, l, output):
@@ -129,16 +131,32 @@ class YOLO_Loss(nn.Module):
         pred_boxes = self.get_pred_boxes(l, output)
 
         # 损失计算
+        # y_true[..., 4] == 1 表示负责预测物体的那部分先验框（也就是正样本）
+        pos_mask = y_true[..., 4] == 1
+        # 负样本
+        neg_mask = y_true[..., 4] == 0
         # 1.定位误差计算
         #   先计算所有的CIOU损失，后续根据正负样本取值即可
         #   pred_boxes[:, :, :, :, :4].shape = (bs, 3, fs, fs, 4)
         CIOU = get_CIOU(pred_boxes[..., :4], y_true[..., :4])
         #   只有正样本才会计算定位损失
-        #   y_true[..., 4] == 1 表示负责预测物体的那部分先验框（也就是正样本）
-        pos_mask = y_true[..., 4] == 1
-        loc_loss = torch.sum((1 - CIOU[pos_mask]) * (2 - (y_true[pos_mask][..., 2] / feature_shape[0]) *
-                                                     (y_true[pos_mask][..., 3] / feature_shape[1])))
-        print(loc_loss)
+        loc_loss = self.lambda_pos * torch.sum(
+            (1 - CIOU[pos_mask]) * (2 - (y_true[pos_mask][..., 2] / feature_shape[0]) *
+                                    (y_true[pos_mask][..., 3] / feature_shape[1])))
+
+        # 2.置信度误差计算
+        #   正样本置信度误差
+        pos_conf_loss = (-1) * torch.sum(torch.nn.BCELoss()(pred_boxes[pos_mask][..., 4], y_true[pos_mask][..., 4]))
+        #   负样本置信度误差
+        neg_conf_loss = (-1) * self.lambda_neg * torch.sum(torch.nn.BCELoss()(pred_boxes[neg_mask][..., 4],
+                                                                              y_true[neg_mask][..., 4]))
+
+        # 3.分类损失
+        cls_loss = (-1) * torch.sum(torch.nn.BCELoss()(pred_boxes[pos_mask][..., 5:], y_true[pos_mask][..., 5:]))
+
+        total_loss = loc_loss + pos_conf_loss + neg_conf_loss + cls_loss
+
+        return total_loss
 
 
 if __name__ == '__main__':
@@ -157,6 +175,6 @@ if __name__ == '__main__':
         inputs = inputs.to(criterion.device)
         out = model(inputs)
         for layer in range(len(out)):
-            if layer == 2:
+            if layer == 0:
                 y_true[layer] = y_true[layer].to(criterion.device)
                 criterion(layer, out[layer], y_true[layer])
