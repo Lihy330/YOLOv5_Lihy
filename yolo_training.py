@@ -121,6 +121,25 @@ class YOLO_Loss(nn.Module):
 
         return pred_boxes
 
+    def clip_by_tensor(self, t, t_min, t_max):
+        t = t.float()
+        # t >= t_min ==> t, t < t_min ==> t_min，意义就是将t中小于t_min的数值变成t_min，用t_min替换掉数据中的较小的值
+        result = (t >= t_min).float() * t + (t < t_min).float() * t_min
+        # result <= t_max ==> result, result > t_max ==> t_max，意义就是将result中大于t_max的数值变成t_max
+        result = (result <= t_max).float() * result + (result > t_max).float() * t_max
+        # 最终的result就是将t的数据截取到[t_min, t_max]
+        return result
+
+    def MSELoss(self, pred, target):
+        return torch.pow(pred - target, 2)
+
+    def BCELoss(self, pred, target):
+        epsilon = 1e-7
+        # 先将pred的数据截取到[epsilon, 1.0 - epsilon]
+        pred = self.clip_by_tensor(pred, epsilon, 1.0 - epsilon)
+        output = - target * torch.log(pred) - (1.0 - target) * torch.log(1.0 - pred)
+        return output
+
     # output 即神经网络输出的某个特征层
     # y_true 即先验框，网格与标签的对应情况
     def forward(self, l, output, y_true):
@@ -132,9 +151,9 @@ class YOLO_Loss(nn.Module):
 
         # 损失计算
         # y_true[..., 4] == 1 表示负责预测物体的那部分先验框（也就是正样本）
-        pos_mask = y_true[..., 4] == 1
+        pos_mask = y_true[..., 4] == 1.
         # 负样本
-        neg_mask = y_true[..., 4] == 0
+        neg_mask = y_true[..., 4] == 0.
         # 1.定位误差计算
         #   先计算所有的CIOU损失，后续根据正负样本取值即可
         #   pred_boxes[:, :, :, :, :4].shape = (bs, 3, fs, fs, 4)
@@ -146,13 +165,13 @@ class YOLO_Loss(nn.Module):
 
         # 2.置信度误差计算
         #   正样本置信度误差
-        pos_conf_loss = (-1) * torch.sum(torch.nn.BCELoss()(pred_boxes[pos_mask][..., 4], y_true[pos_mask][..., 4]))
+        pos_conf_loss = torch.sum(self.BCELoss(pred_boxes[pos_mask][..., 4], y_true[pos_mask][..., 4]))
         #   负样本置信度误差
-        neg_conf_loss = (-1) * self.lambda_neg * torch.sum(torch.nn.BCELoss()(pred_boxes[neg_mask][..., 4],
-                                                                              y_true[neg_mask][..., 4]))
+        neg_conf_loss = self.lambda_neg * torch.sum(self.BCELoss(pred_boxes[neg_mask][..., 4],
+                                                                 y_true[neg_mask][..., 4]))
 
         # 3.分类损失
-        cls_loss = (-1) * torch.sum(torch.nn.BCELoss()(pred_boxes[pos_mask][..., 5:], y_true[pos_mask][..., 5:]))
+        cls_loss = torch.sum(self.BCELoss(pred_boxes[pos_mask][..., 5:], y_true[pos_mask][..., 5:]))
 
         total_loss = loc_loss + pos_conf_loss + neg_conf_loss + cls_loss
 
@@ -161,13 +180,14 @@ class YOLO_Loss(nn.Module):
 
 if __name__ == '__main__':
     anchors_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     num_classes = 20
     input_shape = [640, 640]
     anchors_path = r"D:\YOLO\yolov5-pytorch-main\model_data\yolo_anchor.txt"
     train_data_file_path = r"./voc_train_data.txt"
     val_data_file_path = r"./voc_val_data.txt"
     anchors = get_anchors(anchors_path)
-    criterion = YOLO_Loss(input_shape, anchors, num_classes, anchors_mask)
+    criterion = YOLO_Loss(input_shape, anchors, num_classes, anchors_mask, device)
     model = YOLOBody(3, 64, num_classes, anchors_mask).to(criterion.device)
     yolo_dt = Yolo_Dataset(anchors, train_data_file_path, val_data_file_path, num_classes, anchors_mask, mode='train')
     yolo_dl = DataLoader(yolo_dt, batch_size=1, shuffle=False, collate_fn=collate_fn)
@@ -177,4 +197,6 @@ if __name__ == '__main__':
         for layer in range(len(out)):
             if layer == 0:
                 y_true[layer] = y_true[layer].to(criterion.device)
-                criterion(layer, out[layer], y_true[layer])
+                loss = criterion(layer, out[layer], y_true[layer])
+                print(loss)
+                break

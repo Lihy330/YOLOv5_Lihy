@@ -46,13 +46,15 @@ if __name__ == "__main__":
         loss_batch = 0
         batch_cnt = 0
         for inputs, boxs, y_true in yolo_dl:
+            # 将训练数据扔到设备中
+            with torch.no_grad():
+                inputs = inputs.cuda(device)
+                y_true = [ann.cuda(device) for ann in y_true]
             batch_cnt += inputs.shape[0]
             optimizer.zero_grad()
-            inputs = inputs.to(device)
             out = model(inputs)
             # 计算每个特征层的损失
             for layer in range(len(anchors_mask)):
-                y_true[layer] = y_true[layer].to(device)
                 loss = criterion(layer, out[layer], y_true[layer])
                 loss_batch += loss
             loss_batch.backward()
