@@ -64,7 +64,7 @@ def get_CIOU(pred, target):
 
 
 class YOLO_Loss(nn.Module):
-    def __init__(self, input_shape, anchors, num_classes, anchors_mask):
+    def __init__(self, input_shape, anchors, num_classes, anchors_mask, device):
         super(YOLO_Loss, self).__init__()
         self.input_shape = input_shape
         self.anchors_mask = anchors_mask
@@ -72,7 +72,7 @@ class YOLO_Loss(nn.Module):
         self.anchors = anchors
         self.lambda_pos = 5
         self.lambda_neg = 0.5
-        self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        self.device = device
 
     def get_pred_boxes(self, l, output):
         batch_size = output.shape[0]
