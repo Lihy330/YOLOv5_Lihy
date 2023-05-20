@@ -3,7 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 from PIL import Image, ImageDraw
 from torchvision import transforms
 import numpy as np
-from _utils import get_anchors
+
 
 
 # map辅助函数
@@ -86,16 +86,14 @@ def resize_annotations(annotations, resized_shape, image_shape):
 
 
 class Yolo_Dataset(Dataset):
-    def __init__(self, train_data_file_path, val_data_file_path, anchors_path, num_classes,
+    def __init__(self, anchors, train_data_file_path, val_data_file_path,num_classes,
                  anchors_mask=[[6, 7, 8], [3, 4, 5], [0, 1, 2]], mode='train'):
         super(Yolo_Dataset, self).__init__()
         # 数据集路径
         self.train_data_file_path = train_data_file_path
         self.val_data_file_path = val_data_file_path
-        # 先验框路径
-        self.anchors_path = anchors_path
         # 先验框尺寸
-        self.anchors = get_anchors(self.anchors_path)
+        self.anchors = anchors
         # 先验框索引
         self.anchors_mask = anchors_mask
         # 网络输入的图像尺寸
@@ -143,7 +141,6 @@ class Yolo_Dataset(Dataset):
         box[:, 3] = temp_height
         # 获取到每个标签框与特征层、先验框、网格点的对应情况，方便后续计算损失
         y_true = self.get_targets(box)
-        print(y_true[0].shape)
         return image_tensor, box, y_true
 
     # targets表示当前图片的标签，形状是(num_boxes, 5)  '5' => xmin, ymin, xmax, ymax, class_index
@@ -216,14 +213,11 @@ class Yolo_Dataset(Dataset):
         return y_true
 
 
-# 保证整体取出数据集使用的数据整理打包函数
-def collate_fn(data):
-    images_list = [single_data[0] for single_data in data]
-    annotations = [single_data[1] for single_data in data]
-    return torch.stack(images_list, dim=0), tuple(annotations)
+
 
 
 if __name__ == "__main__":
+    from _utils import collate_fn
     train_data_file_path = r"../voc_train_data.txt"
     val_data_file_path = r"../voc_val_data.txt"
     anchors_path = r"../model_data/yolo_anchor.txt"

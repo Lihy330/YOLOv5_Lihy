@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 from YoloNet import YOLOBody
-from _utils._utils import get_anchors
-import numpy as np
+from _utils._utils import get_anchors, collate_fn
+from _utils.dataloader import Yolo_Dataset
+from torch.utils.data import DataLoader
 
 
 # pred.shape = (bs, 3, fs, fs, 2)
@@ -41,7 +42,7 @@ def get_IOU(pred_xy, pred_wh, target_xy, target_wh):
     rou = (pred_xy[..., 0] - target_xy[..., 0]) ** 2 + \
           (pred_xy[..., 1] - target_xy[..., 1]) ** 2
     # 计算预测框与标签框相并的面积
-    union_box_area = (pred_wh[..., 0] * pred_wh[..., 1]) + (target_wh[..., 0] * target_wh[..., 1])- intersect_box_area
+    union_box_area = (pred_wh[..., 0] * pred_wh[..., 1]) + (target_wh[..., 0] * target_wh[..., 1]) - intersect_box_area
     union_box_area[union_box_area < 0] = 0.
     # 计算交并比
     IOU = intersect_box_area / union_box_area
@@ -58,8 +59,7 @@ def get_CIOU(pred, target):
     CIOU_v = get_CIOU_v(pred_box_wh, target_box_wh)
     IOU, c, rou = get_IOU(pred_box_xy, pred_box_wh, target_box_xy, target_box_wh)
     CIOU_alpha = get_CIOU_alpha(IOU, CIOU_v)
-    CIOU = 1 - IOU + (rou / c) + CIOU_alpha * CIOU_v
-    print(CIOU.shape)
+    CIOU = IOU - ((rou / c) + CIOU_alpha * CIOU_v)
     return CIOU
 
 
@@ -129,10 +129,16 @@ class YOLO_Loss(nn.Module):
         pred_boxes = self.get_pred_boxes(l, output)
 
         # 损失计算
-        # 先计算所有的CIOU损失，后续根据正负样本取值即可
-        # pred_boxes[:, :, :, :, :4].shape = (bs, 3, fs, fs, 4)
-        CIOU_Loss = get_CIOU(pred_boxes[..., :4], y_true[..., :4])
-        
+        # 1.定位误差计算
+        #   先计算所有的CIOU损失，后续根据正负样本取值即可
+        #   pred_boxes[:, :, :, :, :4].shape = (bs, 3, fs, fs, 4)
+        CIOU = get_CIOU(pred_boxes[..., :4], y_true[..., :4])
+        #   只有正样本才会计算定位损失
+        #   y_true[..., 4] == 1 表示负责预测物体的那部分先验框（也就是正样本）
+        pos_mask = y_true[..., 4] == 1
+        loc_loss = torch.sum((1 - CIOU[pos_mask]) * (2 - (y_true[pos_mask][..., 2] / feature_shape[0]) *
+                                                     (y_true[pos_mask][..., 3] / feature_shape[1])))
+        print(loc_loss)
 
 
 if __name__ == '__main__':
@@ -140,12 +146,17 @@ if __name__ == '__main__':
     num_classes = 20
     input_shape = [640, 640]
     anchors_path = r"D:\YOLO\yolov5-pytorch-main\model_data\yolo_anchor.txt"
+    train_data_file_path = r"./voc_train_data.txt"
+    val_data_file_path = r"./voc_val_data.txt"
     anchors = get_anchors(anchors_path)
     criterion = YOLO_Loss(input_shape, anchors, num_classes, anchors_mask)
     model = YOLOBody(3, 64, num_classes, anchors_mask).to(criterion.device)
-    image = torch.randn(1, 3, 640, 640).to(criterion.device)
-    y_true = torch.randn(1, 3, 20, 20, num_classes + 5).to(criterion.device)
-    out = model(image)
-    for layer in range(len(out)):
-        criterion(layer, out[layer], y_true)
-        break
+    yolo_dt = Yolo_Dataset(anchors, train_data_file_path, val_data_file_path, num_classes, anchors_mask, mode='train')
+    yolo_dl = DataLoader(yolo_dt, batch_size=1, shuffle=False, collate_fn=collate_fn)
+    for idx, (inputs, boxs, y_true) in enumerate(yolo_dl):
+        inputs = inputs.to(criterion.device)
+        out = model(inputs)
+        for layer in range(len(out)):
+            if layer == 2:
+                y_true[layer] = y_true[layer].to(criterion.device)
+                criterion(layer, out[layer], y_true[layer])
