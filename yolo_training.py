@@ -9,8 +9,9 @@ from torch.utils.data import DataLoader
 # pred.shape = (bs, 3, fs, fs, 2)
 # target.shape = (bs, 3, fs, fs, 2)
 def get_CIOU_v(pred, target):
-    arctan_target = torch.arctan(target[..., 0] / target[..., 1])
-    arctan_pred = torch.arctan(pred[..., 0] / pred[..., 1])
+    epsilon = 1e-7
+    arctan_target = torch.arctan(target[..., 0] / (target[..., 1] + epsilon))
+    arctan_pred = torch.arctan(pred[..., 0] / (pred[..., 1] + epsilon))
     return (4 / (torch.pi ** 2)) * (arctan_target - arctan_pred)
 
 
@@ -43,15 +44,37 @@ def get_IOU(pred_xy, pred_wh, target_xy, target_wh):
           (pred_xy[..., 1] - target_xy[..., 1]) ** 2
     # 计算预测框与标签框相并的面积
     union_box_area = (pred_wh[..., 0] * pred_wh[..., 1]) + (target_wh[..., 0] * target_wh[..., 1]) - intersect_box_area
-    union_box_area[union_box_area < 0] = 0.
     # 计算交并比
     IOU = intersect_box_area / union_box_area
     return IOU, c, rou
 
 
+def weights_init(net, init_type='normal', init_gain=0.02):
+    def init_func(m):
+        classname = m.__class__.__name__
+        if hasattr(m, 'weight') and classname.find('Conv') != -1:
+            if init_type == 'normal':
+                torch.nn.init.normal_(m.weight.data, 0.0, init_gain)
+            elif init_type == 'xavier':
+                torch.nn.init.xavier_normal_(m.weight.data, gain=init_gain)
+            elif init_type == 'kaiming':
+                torch.nn.init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
+            elif init_type == 'orthogonal':
+                torch.nn.init.orthogonal_(m.weight.data, gain=init_gain)
+            else:
+                raise NotImplementedError('initialization method [%s] is not implemented' % init_type)
+        elif classname.find('BatchNorm2d') != -1:
+            torch.nn.init.normal_(m.weight.data, 1.0, 0.02)
+            torch.nn.init.constant_(m.bias.data, 0.0)
+
+    print('initialize network with %s type' % init_type)
+    net.apply(init_func)
+
+
 # pred.shape = (bs, 3, fs, fs, 4)
 # target.shape = (bs, 3, fs, fs, 4)
 def get_CIOU(pred, target):
+    epsilon = 1e-7
     pred_box_xy = pred[..., :2]
     target_box_xy = target[..., :2]
     pred_box_wh = pred[..., 2:4]
@@ -59,7 +82,7 @@ def get_CIOU(pred, target):
     CIOU_v = get_CIOU_v(pred_box_wh, target_box_wh)
     IOU, c, rou = get_IOU(pred_box_xy, pred_box_wh, target_box_xy, target_box_wh)
     CIOU_alpha = get_CIOU_alpha(IOU, CIOU_v)
-    CIOU = IOU - ((rou / c) + CIOU_alpha * CIOU_v)
+    CIOU = IOU - ((rou / (c + epsilon)) + CIOU_alpha * CIOU_v)
     return CIOU
 
 
@@ -102,8 +125,6 @@ class YOLO_Loss(nn.Module):
         grid_h = torch.stack([torch.tensor([item]).repeat(feature_shape[0], feature_shape[1])
                               for item in anchors_layer_h], dim=0).type(FloatTensor)
 
-        pred_boxes = torch.zeros_like(prediction).type(FloatTensor)
-
         tx = torch.sigmoid(prediction[..., 0])
         ty = torch.sigmoid(prediction[..., 1])
         tw = torch.sigmoid(prediction[..., 2])
@@ -112,14 +133,14 @@ class YOLO_Loss(nn.Module):
         pred_cls = torch.sigmoid(prediction[..., 5:])
 
         # pred_boxes 就是最终的预测框的尺寸信息
-        pred_boxes[..., 0] = 2 * tx - 0.5 + grid_x
-        pred_boxes[..., 1] = 2 * ty - 0.5 + grid_y
-        pred_boxes[..., 2] = grid_w * (2 * tw ** 2)
-        pred_boxes[..., 3] = grid_h * (2 * th ** 2)
-        pred_boxes[..., 4] = conf
-        pred_boxes[..., 5:] = pred_cls
+        coordination_x = (2 * tx - 0.5 + grid_x).unsqueeze(-1)
+        coordination_y = (2 * ty - 0.5 + grid_y).unsqueeze(-1)
+        pred_box_w = (grid_w * ((2 * tw) ** 2)).unsqueeze(-1)
+        pred_box_h = (grid_h * ((2 * th) ** 2)).unsqueeze(-1)
 
-        return pred_boxes
+        pred_boxes = torch.concat([coordination_x, coordination_y, pred_box_w, pred_box_h], dim=-1)
+
+        return pred_boxes, conf, pred_cls
 
     def clip_by_tensor(self, t, t_min, t_max):
         t = t.float()
@@ -146,8 +167,8 @@ class YOLO_Loss(nn.Module):
         batch_size = output.shape[0]
         # 当前特征层的尺寸
         feature_shape = output.shape[2:4]
-        # pred_boxes就是当前特征层上的预测框  shape = (bs, 3, feature_shape[0], feature_shape[1], num_classes + 5)
-        pred_boxes = self.get_pred_boxes(l, output)
+        # pred_boxes就是当前特征层上的预测框  shape = (bs, 3, feature_shape[0], feature_shape[1], 4)
+        pred_boxes, conf, pred_cls = self.get_pred_boxes(l, output)
 
         # 损失计算
         # y_true[..., 4] == 1 表示负责预测物体的那部分先验框（也就是正样本）
@@ -156,8 +177,7 @@ class YOLO_Loss(nn.Module):
         neg_mask = y_true[..., 4] == 0.
         # 1.定位误差计算
         #   先计算所有的CIOU损失，后续根据正负样本取值即可
-        #   pred_boxes[:, :, :, :, :4].shape = (bs, 3, fs, fs, 4)
-        CIOU = get_CIOU(pred_boxes[..., :4], y_true[..., :4])
+        CIOU = get_CIOU(pred_boxes, y_true[..., :4])
         #   只有正样本才会计算定位损失
         loc_loss = self.lambda_pos * torch.sum(
             (1 - CIOU[pos_mask]) * (2 - (y_true[pos_mask][..., 2] / feature_shape[0]) *
@@ -165,13 +185,13 @@ class YOLO_Loss(nn.Module):
 
         # 2.置信度误差计算
         #   正样本置信度误差
-        pos_conf_loss = torch.sum(self.BCELoss(pred_boxes[pos_mask][..., 4], y_true[pos_mask][..., 4]))
+        pos_conf_loss = torch.sum(self.BCELoss(conf[pos_mask], y_true[pos_mask][..., 4]))
         #   负样本置信度误差
-        neg_conf_loss = self.lambda_neg * torch.sum(self.BCELoss(pred_boxes[neg_mask][..., 4],
+        neg_conf_loss = self.lambda_neg * torch.sum(self.BCELoss(conf[neg_mask],
                                                                  y_true[neg_mask][..., 4]))
 
         # 3.分类损失
-        cls_loss = torch.sum(self.BCELoss(pred_boxes[pos_mask][..., 5:], y_true[pos_mask][..., 5:]))
+        cls_loss = torch.sum(self.BCELoss(pred_cls[pos_mask], y_true[pos_mask][..., 5:]))
 
         total_loss = loc_loss + pos_conf_loss + neg_conf_loss + cls_loss
 
