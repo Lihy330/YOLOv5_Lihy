@@ -16,7 +16,8 @@ def get_CIOU_v(pred, target):
 
 
 def get_CIOU_alpha(IOU, v):
-    return v / (1 - IOU + v)
+    epsilon = 1e-7
+    return v / (1 - IOU + v + epsilon)
 
 
 def get_IOU(pred_xy, pred_wh, target_xy, target_wh):
