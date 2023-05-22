@@ -87,6 +87,50 @@ def get_CIOU(pred, target):
     return CIOU
 
 
+def calculate_CIOU(box1, box2):
+    # 获取框的坐标信息
+    box1_x, box1_y, box1_w, box1_h = box1[..., 0], box1[..., 1], box1[..., 2], box1[..., 3]
+    box2_x, box2_y, box2_w, box2_h = box2[..., 0], box2[..., 1], box2[..., 2], box2[..., 3]
+
+    # 计算框的中心点坐标
+    box1_center_x = box1_x + box1_w / 2
+    box1_center_y = box1_y + box1_h / 2
+    box2_center_x = box2_x + box2_w / 2
+    box2_center_y = box2_y + box2_h / 2
+
+    # 计算相交框的左上角和右下角坐标
+    intersect_x1 = torch.max(box1_x - box1_w / 2, box2_x - box2_w / 2)
+    intersect_y1 = torch.max(box1_y - box1_h / 2, box2_y - box2_h / 2)
+    intersect_x2 = torch.min(box1_x + box1_w / 2, box2_x + box2_w / 2)
+    intersect_y2 = torch.min(box1_y + box1_h / 2, box2_y + box2_h / 2)
+
+    # 计算相交框的面积
+    intersect_area = torch.clamp(intersect_x2 - intersect_x1, min=0) * torch.clamp(intersect_y2 - intersect_y1, min=0)
+
+    # 计算框的面积
+    box1_area = box1_w * box1_h
+    box2_area = box2_w * box2_h
+
+    # 计算相并框的面积
+    union_area = box1_area + box2_area - intersect_area
+
+    # 计算框的对角线距离的平方
+    c = (box2_center_x - box1_center_x) ** 2 + (box2_center_y - box1_center_y) ** 2
+
+    # 计算预测框与目标框的IoU
+    iou = intersect_area / union_area
+
+    epsilon = 1e-7  # 很小的常数
+
+    v = (4 / (torch.pi ** 2)) * torch.pow(
+        torch.atan(box2_w / (box2_h + epsilon)) - torch.atan(box1_w / (box1_h + epsilon)), 2)
+
+    # 计算CIoU损失
+    ciou_loss = 1 - iou + v / (1 - iou + v) * c / ((box1_w + box1_h) ** 2 + (box2_w + box2_h) ** 2 - c)
+
+    return ciou_loss
+
+
 class YOLO_Loss(nn.Module):
     def __init__(self, input_shape, anchors, num_classes, anchors_mask, device):
         super(YOLO_Loss, self).__init__()
@@ -177,22 +221,27 @@ class YOLO_Loss(nn.Module):
         # 负样本
         neg_mask = y_true[..., 4] == 0.
         # 1.定位误差计算
-        #   先计算所有的CIOU损失，后续根据正负样本取值即可
-        CIOU = get_CIOU(pred_boxes, y_true[..., :4])
-        #   只有正样本才会计算定位损失
-        loc_loss = self.lambda_pos * torch.sum(
-            (1 - CIOU[pos_mask]) * (2 - (y_true[pos_mask][..., 2] / feature_shape[0]) *
-                                    (y_true[pos_mask][..., 3] / feature_shape[1])))
+        # #   先计算所有的CIOU损失，后续根据正负样本取值即可
+        # CIOU = get_CIOU(pred_boxes, y_true[..., :4])
+        # #   只有正样本才会计算定位损失
+        # loc_loss = self.lambda_pos * torch.sum(
+        #     (1 - CIOU[pos_mask]) * (2 - (y_true[pos_mask][..., 2] / feature_shape[0]) *
+        #                             (y_true[pos_mask][..., 3] / feature_shape[1])))
+
+        CIOU_Loss = calculate_CIOU(pred_boxes, y_true[..., :4])
+        loc_loss = self.lambda_pos * torch.mean(
+            CIOU_Loss[pos_mask] * (2 - (y_true[pos_mask][..., 2] / feature_shape[0]) *
+                                   (y_true[pos_mask][..., 3] / feature_shape[1])))
 
         # 2.置信度误差计算
         #   正样本置信度误差
-        pos_conf_loss = torch.sum(self.BCELoss(conf[pos_mask], y_true[pos_mask][..., 4]))
+        pos_conf_loss = torch.mean(self.BCELoss(conf[pos_mask], y_true[pos_mask][..., 4]))
         #   负样本置信度误差
-        neg_conf_loss = self.lambda_neg * torch.sum(self.BCELoss(conf[neg_mask],
+        neg_conf_loss = self.lambda_neg * torch.mean(self.BCELoss(conf[neg_mask],
                                                                  y_true[neg_mask][..., 4]))
 
         # 3.分类损失
-        cls_loss = torch.sum(self.BCELoss(pred_cls[pos_mask], y_true[pos_mask][..., 5:]))
+        cls_loss = torch.mean(self.BCELoss(pred_cls[pos_mask], y_true[pos_mask][..., 5:]))
 
         total_loss = loc_loss + pos_conf_loss + neg_conf_loss + cls_loss
 
@@ -201,7 +250,8 @@ class YOLO_Loss(nn.Module):
 
 if __name__ == '__main__':
     anchors_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    # device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu'
     num_classes = 20
     input_shape = [640, 640]
     anchors_path = r"D:\YOLO\yolov5-pytorch-main\model_data\yolo_anchor.txt"

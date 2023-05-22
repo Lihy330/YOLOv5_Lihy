@@ -27,7 +27,7 @@ def get_label_info(content, written_name):
         fw.write(image_path + " ")
 
     # 枚举所有的object
-    for label in label_infos:
+    for idx, label in enumerate(label_infos):
         # 标签信息
         target = []
         # 获取到名字叫name的标签
@@ -48,7 +48,8 @@ def get_label_info(content, written_name):
         # 写入标签信息
         with open(written_name, 'a', encoding='utf-8') as fw:
             [fw.write(str(item) + ',') for item in target]
-            fw.write(' ')
+            if len(label_infos) != 1 and idx != len(label_infos) - 1:
+                fw.write(' ')
 
     with open(written_name, 'a', encoding='utf-8') as fw:
         fw.write("\n")

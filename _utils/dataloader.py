@@ -23,7 +23,7 @@ def split_single_annotation_func(data):
 # map辅助函数
 def split_annotations_path_func(data):
     data_list = data.split(' ')
-    annotations = list(map(split_single_annotation_func, data_list[1:-1]))
+    annotations = list(map(split_single_annotation_func, data_list[1:]))
     return annotations
 
 
