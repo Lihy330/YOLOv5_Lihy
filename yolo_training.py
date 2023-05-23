@@ -138,9 +138,15 @@ class YOLO_Loss(nn.Module):
         self.anchors_mask = anchors_mask
         self.num_classes = num_classes
         self.anchors = anchors
-        self.lambda_pos = 5
-        self.lambda_neg = 0.5
         self.device = device
+        # 置信度损失权重(三个特征层不同)，list[0]就是第0个特征层的权重，以此类推
+        self.balance = [0.4, 1.0, 4]
+        # 定位误差的权重
+        self.box_ratio = 0.05
+        # 置信度损失权重
+        self.obj_ratio = 1 * (input_shape[0] * input_shape[1]) / (640 ** 2)
+        # 分类误差的权重
+        self.cls_ratio = 0.5 * (num_classes / 80)
 
     def get_pred_boxes(self, l, output):
         batch_size = output.shape[0]
@@ -196,9 +202,6 @@ class YOLO_Loss(nn.Module):
         # 最终的result就是将t的数据截取到[t_min, t_max]
         return result
 
-    def MSELoss(self, pred, target):
-        return torch.pow(pred - target, 2)
-
     def BCELoss(self, pred, target):
         epsilon = 1e-7
         # 先将pred的数据截取到[epsilon, 1.0 - epsilon]
@@ -229,22 +232,25 @@ class YOLO_Loss(nn.Module):
         #     (1 - CIOU[pos_mask]) * (2 - (y_true[pos_mask][..., 2] / feature_shape[0]) *
         #                             (y_true[pos_mask][..., 3] / feature_shape[1])))
 
+        # GPT实现的CIOU_Loss
         CIOU_Loss = calculate_CIOU(pred_boxes, y_true[..., :4])
-        loc_loss = self.lambda_pos * torch.mean(
+        CIOU = 1 - CIOU_Loss
+        loc_loss = torch.mean(
             CIOU_Loss[pos_mask] * (2 - (y_true[pos_mask][..., 2] / feature_shape[0]) *
                                    (y_true[pos_mask][..., 3] / feature_shape[1])))
 
         # 2.置信度误差计算
-        #   正样本置信度误差
-        pos_conf_loss = torch.mean(self.BCELoss(conf[pos_mask], y_true[pos_mask][..., 4]))
-        #   负样本置信度误差
-        neg_conf_loss = self.lambda_neg * torch.mean(self.BCELoss(conf[neg_mask],
-                                                                  y_true[neg_mask][..., 4]))
+        # 置信度标签
+        #   满足条件说明当前先验框是正样本，那么置信度标签值就是CIOU值
+        #   负样本的标签值就是0
+        conf_pos_neg_label = torch.where(y_true[..., 4] == 1, CIOU.detach().clamp(0), torch.zeros_like(y_true[..., 4]))
+
+        conf_loss = torch.mean(self.BCELoss(conf, conf_pos_neg_label))
 
         # 3.分类损失
         cls_loss = torch.mean(self.BCELoss(pred_cls[pos_mask], y_true[pos_mask][..., 5:]))
 
-        total_loss = loc_loss + pos_conf_loss + neg_conf_loss + cls_loss
+        total_loss = loc_loss * self.box_ratio + conf_loss * self.balance[l] * self.obj_ratio + cls_loss * self.cls_ratio
 
         return total_loss
 

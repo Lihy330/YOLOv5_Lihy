@@ -34,7 +34,9 @@ if __name__ == "__main__":
     yolo_dt = Yolo_Dataset(anchors, train_data_file_path, val_data_file_path, num_classes, anchors_mask, mode='train')
     yolo_dl = DataLoader(yolo_dt, batch_size=4, shuffle=False, collate_fn=collate_fn)
     # 优化器
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-5)
+    momentum = 0.937
+    weight_decay = 5e-4
+    optimizer = torch.optim.SGD(model.parameters(), lr=5e-5, momentum=momentum, weight_decay=weight_decay)
     # 训练总迭代数量
     n_epochs = 200000
 
