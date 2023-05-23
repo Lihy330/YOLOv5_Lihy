@@ -203,7 +203,8 @@ class YOLO_Loss(nn.Module):
         epsilon = 1e-7
         # 先将pred的数据截取到[epsilon, 1.0 - epsilon]
         pred = self.clip_by_tensor(pred, epsilon, 1.0 - epsilon)
-        output = - target * torch.log(pred) - (1.0 - target) * torch.log(1.0 - pred)
+        # output = - target * torch.log(pred) - (1.0 - target) * torch.log(1.0 - pred)
+        output = torch.nn.BCELoss()(pred, target)
         return output
 
     # output 即神经网络输出的某个特征层
@@ -217,9 +218,9 @@ class YOLO_Loss(nn.Module):
 
         # 损失计算
         # y_true[..., 4] == 1 表示负责预测物体的那部分先验框（也就是正样本）
-        pos_mask = y_true[..., 4] == 1.
+        pos_mask = y_true[..., 4] == 1
         # 负样本
-        neg_mask = y_true[..., 4] == 0.
+        neg_mask = y_true[..., 4] == 0
         # 1.定位误差计算
         # #   先计算所有的CIOU损失，后续根据正负样本取值即可
         # CIOU = get_CIOU(pred_boxes, y_true[..., :4])
@@ -238,7 +239,7 @@ class YOLO_Loss(nn.Module):
         pos_conf_loss = torch.mean(self.BCELoss(conf[pos_mask], y_true[pos_mask][..., 4]))
         #   负样本置信度误差
         neg_conf_loss = self.lambda_neg * torch.mean(self.BCELoss(conf[neg_mask],
-                                                                 y_true[neg_mask][..., 4]))
+                                                                  y_true[neg_mask][..., 4]))
 
         # 3.分类损失
         cls_loss = torch.mean(self.BCELoss(pred_cls[pos_mask], y_true[pos_mask][..., 5:]))

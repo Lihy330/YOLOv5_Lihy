@@ -24,8 +24,8 @@ if __name__ == "__main__":
     # 获取先验框尺寸
     anchors = get_anchors(anchors_path)
     # 设备
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    # device = 'cpu'
+    # device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu'
     # 评价器，损失函数
     criterion = YOLO_Loss(input_shape, anchors, num_classes, anchors_mask, device)
     # 模型
