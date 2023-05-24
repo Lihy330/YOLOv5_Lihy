@@ -88,6 +88,7 @@ def get_CIOU(pred, target):
 
 
 def calculate_CIOU(box1, box2):
+    epsilon = 1e-7  # 很小的常数
     # 获取框的坐标信息
     box1_x, box1_y, box1_w, box1_h = box1[..., 0], box1[..., 1], box1[..., 2], box1[..., 3]
     box2_x, box2_y, box2_w, box2_h = box2[..., 0], box2[..., 1], box2[..., 2], box2[..., 3]
@@ -115,18 +116,18 @@ def calculate_CIOU(box1, box2):
     union_area = box1_area + box2_area - intersect_area
 
     # 计算框的对角线距离的平方
-    c = (box2_center_x - box1_center_x) ** 2 + (box2_center_y - box1_center_y) ** 2
+    c = torch.clamp((box2_center_x - box1_center_x) ** 2 + (box2_center_y - box1_center_y) ** 2, epsilon)
 
     # 计算预测框与目标框的IoU
-    iou = intersect_area / union_area
-
-    epsilon = 1e-7  # 很小的常数
+    iou = intersect_area / (union_area + epsilon)
+    # iou = intersect_area / union_area
 
     v = (4 / (torch.pi ** 2)) * torch.pow(
         torch.atan(box2_w / (box2_h + epsilon)) - torch.atan(box1_w / (box1_h + epsilon)), 2)
 
     # 计算CIoU损失
-    ciou_loss = 1 - iou + v / (1 - iou + v) * c / ((box1_w + box1_h) ** 2 + (box2_w + box2_h) ** 2 - c)
+    ciou_loss = 1 - iou + (v ** 2 / (1 - iou + v)) + \
+                ((box1_center_x - box2_center_x) ** 2 + (box1_center_y - box2_center_y) ** 2) / c
 
     return ciou_loss
 
